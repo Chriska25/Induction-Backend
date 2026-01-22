@@ -275,7 +275,7 @@ app.get('/api/trainings/user/:userId', async (req, res) => {
         res.json(data);
     } catch (error) {
         console.error('Get trainings error:', error);
-        res.status(500).json({ error: 'Failed to fetch trainings' });
+        res.status(500).json({ error: 'Failed to fetch trainings', details: error });
     }
 });
 
