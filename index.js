@@ -31,23 +31,14 @@ app.use(cors({
 app.use(express.json());
 app.use(express.urlencoded({ extended: true }));
 
-// Multer configuration for file uploads
-const storage = multer.diskStorage({
-    destination: (req, file, cb) => {
-        const uploadDir = path.join(__dirname, 'uploads');
-        if (!fs.existsSync(uploadDir)) {
-            fs.mkdirSync(uploadDir, { recursive: true });
-        }
-        cb(null, uploadDir);
-    },
-    filename: (req, file, cb) => {
-        cb(null, `${Date.now()}-${Math.round(Math.random() * 1E9)}${path.extname(file.originalname)}`);
-    }
+// Multer configuration for file uploads - using memory storage for Supabase upload
+const storage = multer.memoryStorage();
+const upload = multer({
+    storage,
+    limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
 });
 
-const upload = multer({ storage });
-
-// Serve uploaded files
+// Serve uploaded files (fallback for old local files)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
 
 // ==================== ROUTES ====================
@@ -325,11 +316,26 @@ app.get('/api/trainings/user/:userId', async (req, res) => {
 // Create/Update training
 app.post('/api/trainings', async (req, res) => {
     try {
-        const { user_id, module_id, status, progress } = req.body;
+        const { userId, moduleId, status, progress, score, type } = req.body;
+
+        // Map frontend fields (if present) to backend schema
+        const final_userId = userId || req.body.user_id;
+        const final_moduleId = moduleId || req.body.module_id;
+        const final_status = type || status || 'en_cours';
+        const final_progress = score !== undefined ? score : (progress || 0);
+
+        if (!final_userId || !final_moduleId) {
+            return res.status(400).json({ error: 'Missing userId or moduleId' });
+        }
 
         const { data, error } = await supabase
             .from('trainings')
-            .upsert([{ user_id, module_id, status, progress }], {
+            .upsert([{
+                user_id: final_userId,
+                module_id: final_moduleId,
+                status: final_status,
+                progress: final_progress
+            }], {
                 onConflict: 'user_id,module_id'
             })
             .select()
@@ -339,7 +345,7 @@ app.post('/api/trainings', async (req, res) => {
         res.json(data);
     } catch (error) {
         console.error('Create training error:', error);
-        res.status(500).json({ error: 'Failed to create training' });
+        res.status(500).json({ error: 'Failed to create training', details: error.message });
     }
 });
 
