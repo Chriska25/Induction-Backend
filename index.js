@@ -402,25 +402,55 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         }
 
         const userId = req.body.userId || null;
-        const filename = req.file.filename;
-        const filePath = `/uploads/${filename}`;
+        const filename = `${Date.now()}-${req.file.originalname}`;
+
+        // Upload to Supabase Storage
+        const { data: uploadData, error: uploadError } = await supabase.storage
+            .from('images')
+            .upload(filename, req.file.buffer || fs.readFileSync(req.file.path), {
+                contentType: req.file.mimetype,
+                upsert: false
+            });
+
+        if (uploadError) {
+            console.error('Supabase upload error:', uploadError);
+            throw uploadError;
+        }
+
+        // Get public URL
+        const { data: urlData } = supabase.storage
+            .from('images')
+            .getPublicUrl(filename);
+
+        const publicUrl = urlData.publicUrl;
 
         // Save to database
         if (userId) {
             const { data, error } = await supabase
                 .from('images')
-                .insert([{ user_id: userId, filename, path: filePath }])
+                .insert([{ user_id: userId, filename, path: publicUrl }])
                 .select()
                 .single();
 
             if (error) throw error;
-            res.json({ path: filePath, id: data.id });
+
+            // Delete local file after upload to Supabase
+            if (req.file.path) {
+                fs.unlinkSync(req.file.path);
+            }
+
+            res.json({ path: publicUrl, id: data.id });
         } else {
-            res.json({ path: filePath });
+            // Delete local file after upload to Supabase
+            if (req.file.path) {
+                fs.unlinkSync(req.file.path);
+            }
+
+            res.json({ path: publicUrl });
         }
     } catch (error) {
         console.error('Upload error:', error);
-        res.status(500).json({ error: 'Upload failed' });
+        res.status(500).json({ error: 'Upload failed', details: error.message });
     }
 });
 
