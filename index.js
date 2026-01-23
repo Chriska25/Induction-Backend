@@ -160,19 +160,21 @@ app.post('/api/users', async (req, res) => {
     }
 });
 
-// Update user
+// Update user profile
 app.put('/api/users/:id', async (req, res) => {
     try {
-        const { fullName, jobTitle, organization, city } = req.body;
+        const { fullName, jobTitle, organization, city, profilePhoto } = req.body;
+
+        const updateData = {};
+        if (fullName !== undefined) updateData.full_name = fullName;
+        if (jobTitle !== undefined) updateData.job_title = jobTitle;
+        if (organization !== undefined) updateData.organization = organization;
+        if (city !== undefined) updateData.city = city;
+        if (profilePhoto !== undefined) updateData.profile_photo = profilePhoto;
 
         const { data, error } = await supabase
             .from('users')
-            .update({
-                full_name: fullName,
-                job_title: jobTitle,
-                organization,
-                city
-            })
+            .update(updateData)
             .eq('id', req.params.id)
             .select()
             .single();
