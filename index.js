@@ -209,39 +209,80 @@ app.get('/api/modules', async (req, res) => {
 // Create module
 app.post('/api/modules', async (req, res) => {
     try {
-        const { title, description, content, order_index } = req.body;
+        const { id, title, description, icon, data } = req.body;
 
-        const { data, error } = await supabase
+        // Create default content structure if no data provided
+        const defaultData = {
+            appTitle: title || 'Nouvelle Formation',
+            sections: [],
+            quiz: {
+                title: 'Quiz de validation',
+                instructions: 'Répondez aux questions suivantes pour valider vos connaissances.',
+                timeLimit: 0,
+                questions: []
+            },
+            certificate: {
+                title: 'Certificat de Réussite',
+                subtitle: title || 'Formation',
+                successMessage: 'Félicitations ! Vous avez réussi cette formation.',
+                logoText: 'PM13',
+                leftLogoUrl: '',
+                rightLogoUrl: '',
+                signatureName: '',
+                signatureTitle: '',
+                signatureImage: '',
+                partnerLogos: []
+            }
+        };
+
+        const moduleData = {
+            id: id || title.toLowerCase().replace(/\s+/g, '-'),
+            title,
+            description: description || '',
+            icon: icon || '📘',
+            data: data ? JSON.stringify(data) : JSON.stringify(defaultData),
+            is_active: true,
+            order_index: 0
+        };
+
+        const { data: result, error } = await supabase
             .from('modules')
-            .insert([{ title, description, content, order_index }])
+            .insert([moduleData])
             .select()
             .single();
 
         if (error) throw error;
-        res.status(201).json(data);
+        res.status(201).json(result);
     } catch (error) {
         console.error('Create module error:', error);
-        res.status(500).json({ error: 'Failed to create module' });
+        res.status(500).json({ error: 'Failed to create module', details: error.message });
     }
 });
 
 // Update module
 app.put('/api/modules/:id', async (req, res) => {
     try {
-        const { title, description, content, order_index, is_active } = req.body;
+        const { title, description, icon, data, is_active } = req.body;
 
-        const { data, error } = await supabase
+        const updateData = {};
+        if (title !== undefined) updateData.title = title;
+        if (description !== undefined) updateData.description = description;
+        if (icon !== undefined) updateData.icon = icon;
+        if (data !== undefined) updateData.data = typeof data === 'string' ? data : JSON.stringify(data);
+        if (is_active !== undefined) updateData.is_active = is_active;
+
+        const { data: result, error } = await supabase
             .from('modules')
-            .update({ title, description, content, order_index, is_active })
+            .update(updateData)
             .eq('id', req.params.id)
             .select()
             .single();
 
         if (error) throw error;
-        res.json(data);
+        res.json(result);
     } catch (error) {
         console.error('Update module error:', error);
-        res.status(500).json({ error: 'Failed to update module' });
+        res.status(500).json({ error: 'Failed to update module', details: error.message });
     }
 });
 
