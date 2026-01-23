@@ -449,6 +449,40 @@ app.get('/api/admin/users', async (req, res) => {
     }
 });
 
+// Update user (admin)
+app.put('/api/admin/users/:userId', async (req, res) => {
+    try {
+        const { role, password } = req.body;
+        const updateData = {};
+
+        // Update role if provided
+        if (role !== undefined) {
+            updateData.role = role;
+        }
+
+        // Update password if provided
+        if (password !== undefined) {
+            updateData.password_hash = await bcrypt.hash(password, 10);
+        }
+
+        const { data, error } = await supabase
+            .from('users')
+            .update(updateData)
+            .eq('id', req.params.userId)
+            .select()
+            .single();
+
+        if (error) throw error;
+
+        // Remove password from response
+        delete data.password_hash;
+        res.json(data);
+    } catch (error) {
+        console.error('Update user error:', error);
+        res.status(500).json({ error: 'Failed to update user' });
+    }
+});
+
 // Get logs
 app.get('/api/admin/logs', async (req, res) => {
     try {
