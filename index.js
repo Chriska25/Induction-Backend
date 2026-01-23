@@ -154,7 +154,7 @@ app.post('/api/users', async (req, res) => {
 // Update user profile
 app.put('/api/users/:id', async (req, res) => {
     try {
-        const { fullName, jobTitle, organization, city, profilePhoto } = req.body;
+        const { fullName, jobTitle, organization, city, profilePhoto, password } = req.body;
 
         const updateData = {};
         if (fullName !== undefined) updateData.full_name = fullName;
@@ -162,6 +162,10 @@ app.put('/api/users/:id', async (req, res) => {
         if (organization !== undefined) updateData.organization = organization;
         if (city !== undefined) updateData.city = city;
         if (profilePhoto !== undefined) updateData.profile_photo = profilePhoto;
+
+        if (password && password.trim() !== '') {
+            updateData.password_hash = await bcrypt.hash(password, 10);
+        }
 
         const { data, error } = await supabase
             .from('users')
