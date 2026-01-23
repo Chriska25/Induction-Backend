@@ -105,7 +105,7 @@ app.get('/api/users/:id', async (req, res) => {
     try {
         const { data, error } = await supabase
             .from('users')
-            .select('id, full_name, email, job_title, organization, city, role, registered_at')
+            .select('id, full_name, email, job_title, organization, city, role, registered_at, profile_photo')
             .eq('id', req.params.id)
             .single();
 
