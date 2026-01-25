@@ -7,6 +7,8 @@ import multer from 'multer';
 import path from 'path';
 import { fileURLToPath } from 'url';
 import fs from 'fs';
+import nodemailer from 'nodemailer';
+import crypto from 'crypto';
 
 // Configuration
 dotenv.config();
@@ -37,6 +39,44 @@ const upload = multer({
     storage,
     limits: { fileSize: 10 * 1024 * 1024 } // 10MB max
 });
+
+// Email Transporter Configuration
+// Dynamic SMTP Transporter Helper
+const createTransporter = async () => {
+    // defaults
+    let config = {
+        host: process.env.SMTP_HOST || 'smtp.gmail.com',
+        port: parseInt(process.env.SMTP_PORT || '587'),
+        secure: process.env.SMTP_SECURE === 'true',
+        auth: {
+            user: process.env.SMTP_USER,
+            pass: process.env.SMTP_PASS
+        },
+        from: process.env.SMTP_FROM || '"Plateforme Formation" <noreply@pm13-formation.com>'
+    };
+
+    // Try to load overrides from DB settings
+    try {
+        const { data: settings } = await supabase.from('settings').select('*');
+        if (settings) {
+            const map = {};
+            settings.forEach(s => map[s.key] = s.value);
+
+            if (map.smtp_host) config.host = map.smtp_host;
+            if (map.smtp_port) config.port = parseInt(map.smtp_port);
+            if (map.smtp_user) config.auth.user = map.smtp_user;
+            if (map.smtp_pass) config.auth.pass = map.smtp_pass;
+            if (map.smtp_from) config.from = map.smtp_from;
+        }
+    } catch (e) {
+        console.warn('Failed to load SMTP settings from DB, using env', e);
+    }
+
+    return {
+        transporter: nodemailer.createTransport(config),
+        from: config.from
+    };
+};
 
 // Serve uploaded files (fallback for old local files)
 app.use('/uploads', express.static(path.join(__dirname, 'uploads')));
@@ -70,6 +110,17 @@ app.post('/api/login', async (req, res) => {
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
             return res.status(401).json({ error: 'Invalid credentials' });
+        }
+
+        // Check verification
+        if (user.email_verified === false) { // Explicit false check, allows null to pass until migration runs, or strict check?
+            // Let's be strict but handle existing logic.
+            // If users are not migrated, email_verified might be null.
+            // If I created migration, they are true.
+            // If migration didn't run, they are null.
+            // Safest is `if (user.email_verified === false)`. 
+            // New users are strictly false.
+            return res.status(403).json({ error: 'Veuillez confirmer votre email avant de vous connecter.' });
         }
 
         // Remove password from response
@@ -125,6 +176,11 @@ app.post('/api/users', async (req, res) => {
         // Hash password
         const password_hash = await bcrypt.hash(password, 10);
 
+        // Generate Verification Token
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const tokenExpires = new Date();
+        tokenExpires.setHours(tokenExpires.getHours() + 24); // 24h expiration
+
         // Insert user
         const { data, error } = await supabase
             .from('users')
@@ -134,10 +190,41 @@ app.post('/api/users', async (req, res) => {
                 job_title: jobTitle,
                 organization,
                 city,
-                password_hash
+                password_hash,
+                email_verified: false,
+                verification_token: verificationToken,
+                verification_token_expires: tokenExpires.toISOString()
             }])
             .select()
             .single();
+
+        if (error) throw error;
+
+        // Send Verification Email
+        try {
+            const { transporter, from } = await createTransporter();
+            const verificationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
+
+            await transporter.sendMail({
+                from: from,
+                to: email,
+                subject: 'Confirmez votre inscription',
+                html: `
+                    <div style="font-family: Arial, sans-serif; padding: 20px;">
+                        <h2>Bienvenue ${fullName} !</h2>
+                        <p>Merci de vous être inscrit sur la plateforme de formation.</p>
+                        <p>Veuillez cliquer sur le lien ci-dessous pour activer votre compte :</p>
+                        <a href="${verificationLink}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;">Confirmer mon email</a>
+                        <p>Ce lien est valide pendant 24 heures.</p>
+                        <p>Si vous n'avez pas demandé cette inscription, ignorez cet email.</p>
+                    </div>
+                `
+            });
+            console.log(`Verification email sent to ${email}`);
+        } catch (emailError) {
+            console.error('Failed to send verification email:', emailError);
+            // We don't fail the request, but user might need to request resend
+        }
 
         if (error) throw error;
 
@@ -148,6 +235,99 @@ app.post('/api/users', async (req, res) => {
     } catch (error) {
         console.error('Create user error:', error);
         res.status(500).json({ error: 'Failed to create user' });
+    }
+});
+
+// Verify Email
+app.post('/api/verify-email', async (req, res) => {
+    try {
+        const { token } = req.body;
+
+        if (!token) {
+            return res.status(400).json({ error: 'Token manquant' });
+        }
+
+        // Find user with this token
+        // Note: verification_token_expires might need to be cast if stored as string, but Supabase handles formatting usually
+        const { data: user, error: findError } = await supabase
+            .from('users')
+            .select('id, verification_token_expires')
+            .eq('verification_token', token)
+            .single();
+
+        if (findError || !user) {
+            return res.status(400).json({ error: 'Lien de validation invalide.' });
+        }
+
+        // Check expiration
+        if (new Date(user.verification_token_expires) < new Date()) {
+            return res.status(400).json({ error: 'Le lien a expiré.' });
+        }
+
+        // Verify user
+        const { error: updateError } = await supabase
+            .from('users')
+            .update({
+                email_verified: true,
+                verification_token: null,
+                verification_token_expires: null
+            })
+            .eq('id', user.id);
+
+        if (updateError) throw updateError;
+
+        res.json({ success: true, message: 'Email vérifié avec succès !' });
+
+    } catch (error) {
+        console.error('Verify email error:', error);
+        res.status(500).json({ error: 'Échec de la vérification' });
+    }
+});
+
+app.post('/api/resend-verification', async (req, res) => {
+    try {
+        const { email } = req.body;
+
+        const { data: user } = await supabase
+            .from('users')
+            .select('full_name')
+            .eq('email', email)
+            .single();
+
+        if (!user) return res.status(404).json({ error: 'Utilisateur non trouvé' });
+
+        const verificationToken = crypto.randomBytes(32).toString('hex');
+        const tokenExpires = new Date();
+        tokenExpires.setHours(tokenExpires.getHours() + 24);
+
+        await supabase
+            .from('users')
+            .update({
+                verification_token: verificationToken,
+                verification_token_expires: tokenExpires.toISOString()
+            })
+            .eq('email', email);
+
+        // Resend logic
+        const { transporter, from } = await createTransporter();
+        const verificationLink = `${process.env.FRONTEND_URL || 'http://localhost:5173'}/verify-email?token=${verificationToken}`;
+
+        await transporter.sendMail({
+            from: from,
+            to: email,
+            subject: 'Nouveau lien de confirmation',
+            html: `
+                <div style="font-family: Arial, sans-serif; padding: 20px;">
+                    <h2>Bonjour ${user.full_name},</h2>
+                    <p>Voici votre nouveau lien de confirmation :</p>
+                    <a href="${verificationLink}" style="display: inline-block; padding: 10px 20px; background-color: #3b82f6; color: white; text-decoration: none; border-radius: 5px; margin: 20px 0;">Confirmer mon email</a>
+                </div>
+            `
+        });
+
+        res.json({ message: 'Email renvoyé' });
+    } catch (e) {
+        res.status(500).json({ error: 'Erreur technique' });
     }
 });
 
