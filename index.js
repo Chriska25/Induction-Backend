@@ -412,12 +412,23 @@ app.post('/api/modules', async (req, res) => {
             }
         };
 
+        // Generate ID if not provided.
+        // We use a clean slug from title + short random suffix to ensure uniqueness and readability.
+        let generatedId = id;
+        if (!generatedId) {
+            const slug = title.toLowerCase()
+                .replace(/[^\w\s-]/g, '') // remove special chars
+                .replace(/\s+/g, '-');    // spaces to dashes
+            const suffix = Math.floor(Math.random() * 10000).toString().padStart(4, '0');
+            generatedId = `${slug}-${suffix}`;
+        }
+
         const moduleData = {
-            id: id || title.toLowerCase().replace(/\s+/g, '-'),
+            id: generatedId,
             title,
             description: description || '',
             icon: icon || '📘',
-            data: data ? JSON.stringify(data) : JSON.stringify(defaultData),
+            data: data ? (typeof data === 'string' ? data : JSON.stringify(data)) : JSON.stringify(defaultData),
             is_active: true,
             order_index: 0
         };
@@ -594,13 +605,17 @@ app.post('/api/upload', upload.single('image'), async (req, res) => {
         }
 
         const userId = req.body.userId || null;
-        const filename = `${Date.now()}-${req.file.originalname}`;
+        // Sanitize filename
+        const sanitizedOriginalName = req.file.originalname.replace(/[^a-zA-Z0-9.-]/g, '_');
+        const filename = `${Date.now()}-${sanitizedOriginalName}`;
 
         // Upload to Supabase Storage
+        const contentType = req.file.mimetype || 'application/octet-stream';
+
         const { data: uploadData, error: uploadError } = await supabase.storage
             .from('images')
             .upload(filename, req.file.buffer || fs.readFileSync(req.file.path), {
-                contentType: req.file.mimetype,
+                contentType: contentType,
                 upsert: false
             });
 
