@@ -234,7 +234,7 @@ app.post('/api/users', async (req, res) => {
         res.status(201).json(data);
     } catch (error) {
         console.error('Create user error:', error);
-        res.status(500).json({ error: 'Failed to create user' });
+        res.status(500).json({ error: 'Failed to create user: ' + (error.message || JSON.stringify(error)) });
     }
 });
 
@@ -689,7 +689,7 @@ app.get('/api/admin/users', async (req, res) => {
 // Update user (admin)
 app.put('/api/admin/users/:userId', async (req, res) => {
     try {
-        const { role, password } = req.body;
+        const { role, password, active } = req.body;
         const updateData = {};
 
         // Update role if provided
@@ -700,6 +700,11 @@ app.put('/api/admin/users/:userId', async (req, res) => {
         // Update password if provided
         if (password !== undefined) {
             updateData.password_hash = await bcrypt.hash(password, 10);
+        }
+
+        // Update active status if provided
+        if (active !== undefined) {
+            updateData.active = active;
         }
 
         const { data, error } = await supabase
@@ -717,6 +722,23 @@ app.put('/api/admin/users/:userId', async (req, res) => {
     } catch (error) {
         console.error('Update user error:', error);
         res.status(500).json({ error: 'Failed to update user' });
+    }
+});
+
+// Delete user (admin)
+app.delete('/api/admin/users/:userId', async (req, res) => {
+    try {
+        const { error } = await supabase
+            .from('users')
+            .delete()
+            .eq('id', req.params.userId);
+
+        if (error) throw error;
+
+        res.json({ message: 'User deleted successfully' });
+    } catch (error) {
+        console.error('Delete user error:', error);
+        res.status(500).json({ error: 'Failed to delete user' });
     }
 });
 
