@@ -112,6 +112,11 @@ app.post('/api/login', async (req, res) => {
             return res.status(401).json({ error: 'Invalid credentials' });
         }
 
+        // Check if account is active (admin ban)
+        if (user.active === false) {
+            return res.status(403).json({ error: 'Votre compte a été désactivé. Contactez l\'administrateur.' });
+        }
+
         // Check verification
         if (user.email_verified === false) { // Explicit false check, allows null to pass until migration runs, or strict check?
             // Let's be strict but handle existing logic.
@@ -222,8 +227,15 @@ app.post('/api/users', async (req, res) => {
             });
             console.log(`Verification email sent to ${email}`);
         } catch (emailError) {
-            console.error('Failed to send verification email:', emailError);
-            // We don't fail the request, but user might need to request resend
+            console.error('Failed to send verification email. Config:', await createTransporter().then(t => {
+                const conf = t.transporter.options; // Access options directly in JS
+                return { ...conf, auth: { ...conf.auth, pass: '***' } };
+            }).catch(e => 'Could not get config for logging'));
+            console.error('Error details:', emailError);
+
+            // FALLBACK: If email fails (e.g. no SMTP), auto-verify the user so they can login immediately
+            console.log("⚠️ SMTP Failure - Auto-verifying user to allow login.");
+            await supabase.from('users').update({ email_verified: true }).eq('id', data.id);
         }
 
         if (error) throw error;
