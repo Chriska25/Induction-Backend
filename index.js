@@ -103,13 +103,15 @@ app.post('/api/login', async (req, res) => {
             .single();
 
         if (error || !user) {
-            return res.status(401).json({ error: 'Invalid credentials' });
+            console.log('Login failed: User not found for email:', email);
+            return res.status(401).json({ error: 'Email non trouvé' });
         }
 
         // Verify password
         const validPassword = await bcrypt.compare(password, user.password_hash);
         if (!validPassword) {
-            return res.status(401).json({ error: 'Invalid credentials' });
+            console.log('Login failed: Invalid password for user:', email);
+            return res.status(401).json({ error: 'Mot de passe incorrect' });
         }
 
         // Check if account is active (admin ban)
